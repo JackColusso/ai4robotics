@@ -11,124 +11,182 @@ import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-######################### renders image from third person perspective for validating policy ##############################
-# env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=False, isDiscrete=True, render_mode='tp_camera')
-##########################################################################################################################
-
-######################### renders image from onboard camera ###############################################################
-# env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=False, isDiscrete=True, render_mode='fp_camera')
-##########################################################################################################################
-
-######################### if running locally you can just render the environment in pybullet's GUI #######################
-#env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=True, isDiscrete=True)
-##########################################################################################################################
-
-# Print out the observation space and action space
-# print("Observation space:", env.observation_space)
-# print("Action space:", env.action_space)
+import matplotlib.pyplot as plt
 
 
-# state, info = env.reset()
-# frames = []
-# frames.append(env.render())
+# Hyperparameters
+EPISODES = 1000
+LEARNING_RATE = 0.00025
+MEM_SIZE = 50000
+REPLAY_START_SIZE = 10000
+BATCH_SIZE = 32
+GAMMA = 0.99
+EPS_START = 0.1
+EPS_END = 0.0001
+EPS_DECAY = 4 * MEM_SIZE
+MEM_RETAIN = 0.1
+NETWORK_UPDATE_ITERS = 5000
+FC1_DIMS = 128
+FC2_DIMS = 128
 
-class DQN(nn.Module):
-    def __init__(self, observation_space, action_space):
-        super(DQN, self).__init__()
-        self.fc1 = nn.Linear(observation_space.shape[0], 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, action_space.n)
+# Metric variables
+best_reward = 0
+average_reward = 0
+episode_history = []
+episode_reward_history = []
+
+class Network(nn.Module):
+    def __init__(self, env):
+        super().__init__()
+        self.input_shape = env.observation_space.shape
+        self.action_space = env.action_space.n
+
+        self.layers = nn.Sequential(
+            nn.Linear(*self.input_shape, FC1_DIMS),
+            nn.ReLU(),
+            nn.Linear(FC1_DIMS, FC2_DIMS),
+            nn.ReLU(),
+            nn.Linear(FC2_DIMS, self.action_space)
+        )
+
+        self.optimizer = optim.Adam(self.parameters(), lr=LEARNING_RATE)
+        self.loss = nn.MSELoss()
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+        return self.layers(x)
 
+class ReplayBuffer:
+    def __init__(self, env):
+        self.mem_count = 0
+        self.states = np.zeros((MEM_SIZE, *env.observation_space.shape), dtype=np.float32)
+        self.actions = np.zeros(MEM_SIZE, dtype=np.int64)
+        self.rewards = np.zeros(MEM_SIZE, dtype=np.float32)
+        self.states_ = np.zeros((MEM_SIZE, *env.observation_space.shape), dtype=np.float32)
+        self.dones = np.zeros(MEM_SIZE, dtype=bool)
 
-# Define the training loop
-def train_dqn(env, dqn, num_episodes=1000, batch_size=32, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.995):
-    optimizer = torch.optim.Adam(dqn.parameters())
-    criterion = nn.MSELoss()
+    def add(self, state, action, reward, state_, done):
+        if self.mem_count < MEM_SIZE:
+            mem_index = self.mem_count
+        else:
+            mem_index = int(self.mem_count % ((1 - MEM_RETAIN) * MEM_SIZE) + (MEM_RETAIN * MEM_SIZE))
+        self.states[mem_index] = state
+        self.actions[mem_index] = action
+        self.rewards[mem_index] = reward
+        self.states_[mem_index] = state_
+        self.dones[mem_index] = 1 - done
+        self.mem_count += 1
 
-    epsilon = epsilon_start
-    for episode in range(num_episodes):
+    def sample(self):
+        MEM_MAX = min(self.mem_count, MEM_SIZE)
+        batch_indices = np.random.choice(MEM_MAX, BATCH_SIZE, replace=True)
+
+        states = self.states[batch_indices]
+        actions = self.actions[batch_indices]
+        rewards = self.rewards[batch_indices]
+        states_ = self.states_[batch_indices]
+        dones = self.dones[batch_indices]
+
+        return states, actions, rewards, states_, dones
+
+class DQN_Solver:
+    def __init__(self, env):
+        self.memory = ReplayBuffer(env)
+        self.policy_network = Network(env)
+        self.target_network = Network(env)
+        self.target_network.load_state_dict(self.policy_network.state_dict())
+        self.learn_count = 0
+
+    def choose_action(self, observation):
+        if self.memory.mem_count > REPLAY_START_SIZE:
+            eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.learn_count / EPS_DECAY)
+        else:
+            eps_threshold = 1.0
+        if random.random() < eps_threshold:
+            return np.random.choice(self.policy_network.action_space)
+        state = torch.tensor(observation).float().detach()
+        state = state.unsqueeze(0)
+        self.policy_network.eval()
+        with torch.no_grad():
+            q_values = self.policy_network(state)
+        return torch.argmax(q_values).item()
+
+    def learn(self):
+        states, actions, rewards, states_, dones = self.memory.sample()
+        states = torch.tensor(states, dtype=torch.float32)
+        actions = torch.tensor(actions, dtype=torch.long)
+        rewards = torch.tensor(rewards, dtype=torch.float32)
+        states_ = torch.tensor(states_, dtype=torch.float32)
+        dones = torch.tensor(dones, dtype=bool)
+        batch_indices = np.arange(BATCH_SIZE, dtype=np.int64)
+
+        self.policy_network.train(True)
+        q_values = self.policy_network(states)
+        q_values = q_values[batch_indices, actions]
+
+        self.target_network.eval()
+        with torch.no_grad():
+            q_values_next = self.target_network(states_)
+        q_values_next_max = torch.max(q_values_next, dim=1)[0]
+        q_target = rewards + GAMMA * q_values_next_max * dones
+
+        loss = self.policy_network.loss(q_target, q_values)
+        self.policy_network.optimizer.zero_grad()
+        loss.backward()
+        self.policy_network.optimizer.step()
+        self.learn_count += 1
+
+        if self.learn_count % NETWORK_UPDATE_ITERS == NETWORK_UPDATE_ITERS - 1:
+            self.update_target_network()
+
+    def update_target_network(self):
+        self.target_network.load_state_dict(self.policy_network.state_dict())
+
+    def returning_epsilon(self):
+        return self.exploration_rate
+
+if __name__ == '__main__':
+    # Main training loop
+    env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=False, isDiscrete=True)
+    env.action_space.seed(0)
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
+    episode_batch_score = 0
+    episode_reward = 0
+    agent = DQN_Solver(env)
+
+    for i in range(EPISODES):
         state, info = env.reset()
-        total_reward = 0
-        done = False
-        while not done:
-            # Epsilon-greedy action selection
-            if np.random.rand() < epsilon:
-                action = env.action_space.sample()
-            else:
-                q_values = dqn(torch.tensor(state, dtype=torch.float32).unsqueeze(0))  # Add an extra dimension for batch
-                action = torch.argmax(q_values).item()
+        while True:
+            action = agent.choose_action(state)         
+            state_, reward, done, _, info = env.step(action)
+            agent.memory.add(state, action, reward, state_, done)
 
-            next_state, reward, done, _, info = env.step(action)
-            # print("State:", state)
-            # print("Action:", action)
+            if agent.memory.mem_count > REPLAY_START_SIZE:
+                agent.learn()
 
-            # Compute TD target
-            q_values_next = dqn(torch.tensor(next_state, dtype=torch.float32).unsqueeze(0))  # Add an extra dimension for batch
-            max_q_value_next = torch.max(q_values_next).item()
-            td_target = reward + gamma * max_q_value_next
-
-            # Compute TD error
-            q_values_current = dqn(torch.tensor(state, dtype=torch.float32).unsqueeze(0))  # Add an extra dimension for batch
-            td_error = td_target - q_values_current[0][action]  # Accessing the Q-value for the selected action
-
-            # Update the Q-value for the selected action
-            q_values_current[0][action] += td_error
-
-            # Backpropagation
-            optimizer.zero_grad()
-            loss = criterion(q_values_current, q_values_next.detach())  # Detach q_values_next to prevent gradient flow
-            loss.backward()
-            optimizer.step()
-
-            state = next_state
-            total_reward += reward
+            state = state_
+            episode_batch_score += reward
+            episode_reward += reward
 
             if done:
                 break
 
-        # Epsilon decay
-        epsilon = max(epsilon_end, epsilon * epsilon_decay)
+        episode_history.append(i)
+        episode_reward_history.append(episode_reward)
+        episode_reward = 0
 
-        # Print episode information
-        print(f"Episode {episode + 1}/{num_episodes}, Total Reward: {total_reward}")
-
-if __name__ == "__main__":
-    # Create the environment
-    env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=False, isDiscrete=True)
-
-    # Print out the observation space and action space
-    print("Observation space:", env.observation_space)
-    print("Action space:", env.action_space)
-
-
-    state, info = env.reset()
-    print(state)
-
-    # Instantiate the DQN network
-    observation_space = env.observation_space
-    action_space = env.action_space
-    dqn = DQN(observation_space, action_space)
-    # Load the pre-trained model
-    dqn.load_state_dict(torch.load('trained_dqn_model.pth'))    
-    # Print out the network architecture
-    print(dqn)
-
-    # Train the DQN agent
-    train_dqn(env, dqn)
-    # Save the trained model
-    torch.save(dqn.state_dict(), 'trained_dqn_model.pth')
-    # for i in range(200):
-    #     action = env.action_space.sample()
-    #     state, reward, done, _, info = env.step(action)
-    #     # frames.append(env.render())  # if running locally not necessary unless you want to grab onboard camera image
-    #     if done:
-    #         break
+        if i % 100 == 0 and agent.memory.mem_count > REPLAY_START_SIZE:
+            torch.save(agent.policy_network.state_dict(), "trained_dqn_model2.pth")
+            print("average total reward per episode batch since episode ", i, ": ", episode_batch_score/ float(100))
+            episode_batch_score = 0
+        elif agent.memory.mem_count < REPLAY_START_SIZE:
+            episode_batch_score = 0
+        
+    plt.plot(episode_history, episode_reward_history)
+    plt.title('Episode Reward vs. Episode')
+    plt.xlabel('Episode')
+    plt.ylabel('Episode Reward')
+    plt.show()
 
     env.close()
