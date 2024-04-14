@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 
 # Hyperparameters
-EPISODES = 1000
+EPISODES = 2000
 LEARNING_RATE = 0.00025
 MEM_SIZE = 50000
 REPLAY_START_SIZE = 10000
@@ -28,6 +28,18 @@ MEM_RETAIN = 0.1
 NETWORK_UPDATE_ITERS = 5000
 FC1_DIMS = 128
 FC2_DIMS = 128
+
+# Action Space Probabilities (PART 2)
+rev_left = 0.15
+rev = 0.15
+rev_right = 0.15
+steer_left = 0.025
+nothrot = 0.05
+steer_right = 0.025
+forward_right = 0.15
+forward = 0.15
+forward_left = 0.15
+
 
 # Metric variables
 best_reward = 0
@@ -102,7 +114,10 @@ class DQN_Solver:
         else:
             eps_threshold = 1.0
         if random.random() < eps_threshold:
-            return np.random.choice(self.policy_network.action_space)
+            # Define a non-uniform distribution based on prior knowledge
+            action_probs = [rev_left, rev, rev_right, steer_left, nothrot, steer_right, forward_right, forward, forward_left]
+            action = np.random.choice(range(self.policy_network.action_space), p=action_probs)
+           # return np.random.choice(self.policy_network.action_space)
         state = torch.tensor(observation).float().detach()
         state = state.unsqueeze(0)
         self.policy_network.eval()
@@ -153,7 +168,16 @@ if __name__ == '__main__':
     torch.manual_seed(0)
     episode_batch_score = 0
     episode_reward = 0
+
     agent = DQN_Solver(env)
+
+    # Attempt to load the pre-trained model
+    pretrained_model_path = "trained_dqn_model2.pth"
+    try:
+        print("Loading pre-trained model...")
+        agent.policy_network.load_state_dict(torch.load(pretrained_model_path))
+    except FileNotFoundError:
+        print("No pre-trained model found, starting from scratch...")
 
     for i in range(EPISODES):
         state, info = env.reset()

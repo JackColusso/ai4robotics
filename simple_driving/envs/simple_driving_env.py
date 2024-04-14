@@ -6,6 +6,7 @@ from pybullet_utils import bullet_client as bc
 from simple_driving.resources.car import Car
 from simple_driving.resources.plane import Plane
 from simple_driving.resources.goal import Goal
+from simple_driving.resources.obstacle import Obstacle
 import matplotlib.pyplot as plt
 import time
 
@@ -84,6 +85,7 @@ class SimpleDrivingEnv(gym.Env):
             print("reached goal")
             self.done = True
             self.reached_goal = True
+            reward +=50
 
         ob = car_ob
         return ob, reward, self.done, dict()
@@ -113,6 +115,10 @@ class SimpleDrivingEnv(gym.Env):
         # Visual element of the goal
         self.goal_object = Goal(self._p, self.goal)
 
+        # Set an Visualise the Obstacle
+        self.obstacle = (1, 2)
+        self.obstacle_object = Obstacle(self._p, self.obstacle)
+        
         # Get observation to return
         carpos = self.car.get_observation()
 
