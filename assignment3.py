@@ -30,6 +30,7 @@ FC1_DIMS = 128
 FC2_DIMS = 128
 
 # Action Space Probabilities (PART 2)
+# Reverse and Forward movement given higher probs as they are more consistant in the task
 rev_left = 0.15
 rev = 0.15
 rev_right = 0.15
@@ -114,6 +115,7 @@ class DQN_Solver:
         else:
             eps_threshold = 1.0
         if random.random() < eps_threshold:
+            # PART 2: Using prior knowledge, determine the probabilities of the actions
             # Define a non-uniform distribution based on prior knowledge
             action_probs = [rev_left, rev, rev_right, steer_left, nothrot, steer_right, forward_right, forward, forward_left]
             action = np.random.choice(range(self.policy_network.action_space), p=action_probs)
@@ -162,7 +164,6 @@ class DQN_Solver:
 if __name__ == '__main__':
     # Main training loop
     env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=False, isDiscrete=True)
-    print(env.observation_space)
     env.action_space.seed(0)
     random.seed(0)
     np.random.seed(0)
