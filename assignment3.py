@@ -162,6 +162,7 @@ class DQN_Solver:
 if __name__ == '__main__':
     # Main training loop
     env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=False, isDiscrete=True)
+    print(env.observation_space)
     env.action_space.seed(0)
     random.seed(0)
     np.random.seed(0)
@@ -172,7 +173,7 @@ if __name__ == '__main__':
     agent = DQN_Solver(env)
 
     # Attempt to load the pre-trained model
-    pretrained_model_path = "trained_dqn_model2.pth"
+    pretrained_model_path = "trained_dqn_model.pth"
     try:
         print("Loading pre-trained model...")
         agent.policy_network.load_state_dict(torch.load(pretrained_model_path))
@@ -201,7 +202,7 @@ if __name__ == '__main__':
         episode_reward = 0
 
         if i % 100 == 0 and agent.memory.mem_count > REPLAY_START_SIZE:
-            torch.save(agent.policy_network.state_dict(), "trained_dqn_model2.pth")
+            torch.save(agent.policy_network.state_dict(), "trained_dqn_model.pth")
             print("average total reward per episode batch since episode ", i, ": ", episode_batch_score/ float(100))
             episode_batch_score = 0
         elif agent.memory.mem_count < REPLAY_START_SIZE:

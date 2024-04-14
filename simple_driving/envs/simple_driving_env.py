@@ -24,8 +24,9 @@ class SimpleDrivingEnv(gym.Env):
                 low=np.array([-1, -.6], dtype=np.float32),
                 high=np.array([1, .6], dtype=np.float32))
         self.observation_space = gym.spaces.box.Box(
-            low=np.array([-40, -40], dtype=np.float32),
-            high=np.array([40, 40], dtype=np.float32))
+            # Changed array size to adapt for obstacle in environment
+            low=np.array([-40, -40, -40, -40], dtype=np.float32),
+            high=np.array([40, 40, 40, 40], dtype=np.float32))
         self.np_random, _ = gym.utils.seeding.np_random()
 
         if renders:
@@ -64,6 +65,8 @@ class SimpleDrivingEnv(gym.Env):
 
           carpos, carorn = self._p.getBasePositionAndOrientation(self.car.car)
           goalpos, goalorn = self._p.getBasePositionAndOrientation(self.goal_object.goal)
+          # PART 4: Added obstacle 
+          obspos, obsorn = self._p.getBasePositionAndOrientation(self.obstacle_object.obstacle)
           car_ob = self.getExtendedObservation()
 
           if self._termination():
@@ -76,9 +79,16 @@ class SimpleDrivingEnv(gym.Env):
                                   # (car_ob[1] - self.goal[1]) ** 2))
         dist_to_goal = math.sqrt(((carpos[0] - goalpos[0]) ** 2 +
                                   (carpos[1] - goalpos[1]) ** 2))
+        
+        dist_to_obs = math.sqrt(((carpos[0] - obspos[0]) ** 2 +
+                                  (carpos[1] - obspos[1]) ** 2))
         # reward = max(self.prev_dist_to_goal - dist_to_goal, 0)
         reward = -dist_to_goal
         self.prev_dist_to_goal = dist_to_goal
+
+        if dist_to_obs < 0.25:
+            print("Obstacle Collision")
+            reward -= 50  # Penalize for colliding with the obstacle
 
         # Done by reaching goal
         if dist_to_goal < 1.5 and not self.reached_goal:
@@ -112,12 +122,16 @@ class SimpleDrivingEnv(gym.Env):
         self.done = False
         self.reached_goal = False
 
+        # Calculate midpoint between goal and origin
+        midpoint_x = (self.goal[0] + 0) / 2
+        midpoint_y = (self.goal[1] + 0) / 2
+        self.obstacle_position = (midpoint_x, midpoint_y)
+
         # Visual element of the goal
         self.goal_object = Goal(self._p, self.goal)
 
         # Set an Visualise the Obstacle
-        self.obstacle = (1, 2)
-        self.obstacle_object = Obstacle(self._p, self.obstacle)
+        self.obstacle_object = Obstacle(self._p, self.obstacle_position)
         
         # Get observation to return
         carpos = self.car.get_observation()
@@ -186,10 +200,13 @@ class SimpleDrivingEnv(gym.Env):
         # self._observation = []  #self._racecar.getObservation()
         carpos, carorn = self._p.getBasePositionAndOrientation(self.car.car)
         goalpos, goalorn = self._p.getBasePositionAndOrientation(self.goal_object.goal)
+        obstaclepos, obstacleorn = self._p.getBasePositionAndOrientation(self.obstacle_object.obstacle)
+
         invCarPos, invCarOrn = self._p.invertTransform(carpos, carorn)
         goalPosInCar, goalOrnInCar = self._p.multiplyTransforms(invCarPos, invCarOrn, goalpos, goalorn)
+        obsDistInCar, obsOrnInCar = self._p.multiplyTransforms(invCarPos, invCarOrn, obstaclepos, obstacleorn)
 
-        observation = [goalPosInCar[0], goalPosInCar[1]]
+        observation = [goalPosInCar[0], goalPosInCar[1]] + [obsDistInCar[0], obsDistInCar[1]]
         return observation
 
     def _termination(self):

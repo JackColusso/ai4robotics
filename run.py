@@ -26,7 +26,7 @@ env = gym.make("SimpleDriving-v0", apply_api_compatibility=True, renders=True, i
 
 # Load saved model for testing
 agent = DQN_Solver(env)
-agent.policy_network.load_state_dict(torch.load("trained_dqn_model2.pth"))
+agent.policy_network.load_state_dict(torch.load("trained_dqn_model.pth"))
 frames = []
 state, info = env.reset()
 agent.policy_network.eval()
